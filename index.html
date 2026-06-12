@@ -69,6 +69,8 @@
             pointer-events: none !important;
         }
 
+
+
         /* Bait Modal Styles */
         #prank-modal {
             position: fixed;
@@ -190,6 +192,27 @@
             z-index: 1;
             background-color: var(--off-color);
             transition: background-color 0.05s ease-out;
+        }
+
+        /* Broken Screen Overlay Layer */
+        #broken-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5; /* Sits on top of the flash background, below controls */
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            background-image: url('Screenshot 2026-06-12 182302.png');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+
+        body.flashing #broken-screen {
+            opacity: 1;
         }
 
         /* Glassmorphic control container */
@@ -597,6 +620,9 @@
     <!-- Flashing Canvas -->
     <div id="flash-screen"></div>
 
+    <!-- Broken Screen Crack Image Overlay -->
+    <div id="broken-screen"></div>
+
     <!-- Floating Controller HUD Button -->
     <div id="hud-activator" title="Show Settings (Press Space to Pause/Play)">
         <i class="fa-solid fa-sliders"></i>
@@ -799,6 +825,72 @@
         // --- Loop Variables ---
         let loopTimeout = null;
 
+        // --- Sound Generator (Glass Shatter synthesis using Web Audio API) ---
+        function playGlassShatter() {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            if (!ctx) return;
+
+            const now = ctx.currentTime;
+
+            // 1. Sharp Impact sound
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(1200, now);
+            osc.frequency.exponentialRampToValueAtTime(100, now + 0.18);
+            gain.gain.setValueAtTime(0.6, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.2);
+
+            // 2. Shatter crackle noise (High Pass white noise)
+            const bufferSize = ctx.sampleRate * 0.6; // 0.6 seconds
+            const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+            
+            const noise = ctx.createBufferSource();
+            noise.buffer = buffer;
+            
+            const noiseFilter = ctx.createBiquadFilter();
+            noiseFilter.type = 'highpass';
+            noiseFilter.frequency.setValueAtTime(3500, now);
+            noiseFilter.frequency.exponentialRampToValueAtTime(7500, now + 0.5);
+            
+            const noiseGain = ctx.createGain();
+            noiseGain.gain.setValueAtTime(0.7, now);
+            noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+            
+            noise.connect(noiseFilter);
+            noiseFilter.connect(noiseGain);
+            noiseGain.connect(ctx.destination);
+            noise.start(now);
+            noise.stop(now + 0.6);
+
+            // 3. Falling glass tinkles (high frequency notes)
+            for (let i = 0; i < 7; i++) {
+                const delay = i * 0.07 + Math.random() * 0.04;
+                const tinkleOsc = ctx.createOscillator();
+                const tinkleGain = ctx.createGain();
+                
+                tinkleOsc.type = 'sine';
+                tinkleOsc.frequency.setValueAtTime(2500 + Math.random() * 4500, now + delay);
+                
+                tinkleGain.gain.setValueAtTime(0, now);
+                tinkleGain.gain.setValueAtTime(0.12, now + delay);
+                tinkleGain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.12);
+                
+                tinkleOsc.connect(tinkleGain);
+                tinkleGain.connect(ctx.destination);
+                tinkleOsc.start(now + delay);
+                tinkleOsc.stop(now + delay + 0.15);
+            }
+        }
+
         // --- Toast Notifications ---
         function showToast(message, type = 'info') {
             const container = document.getElementById('toast-container');
@@ -845,6 +937,7 @@
                 }
             });
 
+            // Colors
             elOffColorPicker.addEventListener('input', (e) => {
                 state.offColor = e.target.value;
                 document.documentElement.style.setProperty('--off-color', state.offColor);
@@ -968,7 +1061,7 @@
         function handleFullscreenChange() {
             state.isFullscreen = !!document.fullscreenElement;
             if (!state.isFullscreen && state.isFlashing) {
-                // If they manually exited fullscreen using Esc, let's keep flashing but show controls
+                // If they manually exited fullscreen, show controls
                 showControls();
             }
         }
@@ -1056,10 +1149,10 @@
                 requestWakeLock();
             }
 
-            // Start the flashing loop
-            runLoop();
+            // Set static black background (no blink only crack show)
+            elFlashScreen.style.backgroundColor = '#000000';
             
-            showToast('Screen flashing active. Press P to Stop & Close.', 'success');
+            showToast('Screen damaged. Press P to Stop & Close.', 'success');
         }
 
         function stopFlashing() {
@@ -1086,7 +1179,7 @@
             elTriggerBtn.innerHTML = '<div class="pulse-indicator"></div><i class="fa-solid fa-play"></i><span id="trigger-btn-text">Start Fullscreen Flash</span>';
             
             showControls();
-            showToast('Screen flashing stopped.', 'info');
+            showToast('Prank stopped.', 'info');
         }
 
         function showControls() {
@@ -1158,6 +1251,18 @@
         const elPrankModal = document.getElementById('prank-modal');
 
         elStartCourseBtn.addEventListener('click', () => {
+            // Vibrate device (shatter pattern)
+            if (navigator.vibrate) {
+                navigator.vibrate([80, 30, 120, 30, 80, 30, 300]);
+            }
+
+            // Play physical glass shatter sound
+            try {
+                playGlassShatter();
+            } catch (e) {
+                console.warn(e);
+            }
+
             // Hide modal
             elPrankModal.classList.add('hidden');
             
